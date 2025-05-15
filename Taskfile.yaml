@@ -10,7 +10,7 @@ tasks:
     generates:
       - bin/ynab-vault
     cmds:
-      - go build -o bin/ynab-vault fetch_budgets.go
+      - go build -o bin/ynab-vault main.go
     silent: true
 
   run:

@@ -55,19 +55,21 @@ func main() {
 		Client:    http.DefaultClient,
 	}
 
-	if err := run(cfg); err != nil {
+	if count, err := run(cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
+	} else if cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "Processed %d budgets\n", count)
 	}
 }
 
-// run orchestrates the fetch-and-save workflow
-func run(cfg Config) error {
+// run orchestrates the fetch-and-save workflow and returns number of budgets processed
+func run(cfg Config) (int, error) {
 	if cfg.Verbose {
 		fmt.Fprintln(os.Stderr, "Creating output directory", cfg.OutputDir)
 	}
 	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
-		return fmt.Errorf("failed to create output dir: %w", err)
+		return 0, fmt.Errorf("failed to create output dir: %w", err)
 	}
 
 	if cfg.Verbose {
@@ -75,82 +77,91 @@ func run(cfg Config) error {
 	}
 	budgets, err := fetchBudgets(cfg)
 	if err != nil {
-		return fmt.Errorf("fetch budgets: %w", err)
+		return 0, fmt.Errorf("fetch budgets: %w", err)
 	}
 
+	count := 0
 	for _, b := range budgets {
 		if cfg.Verbose {
 			fmt.Fprintf(os.Stderr, "Processing budget %s (%s)\n", b.Name, b.ID)
 		}
-		if err := downloadAndSave(cfg, b); err != nil {
+		if path, err := downloadAndSave(cfg, b); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		} else if cfg.Verbose {
+			fmt.Fprintf(os.Stderr, "Saved to %s\n", path)
 		}
+		count++
 	}
-	return nil
+	return count, nil
 }
 
-// fetchBudgets calls the YNAB API to list budgets
+// fetchBudgets calls the YNAB API to list budgets and logs count if verbose
 func fetchBudgets(cfg Config) ([]Budget, error) {
-	req, err := http.NewRequest("GET", cfg.BaseURL, nil)
+	data, err := httpGet(cfg.Client, cfg.BaseURL, cfg.Token)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
+	budgets, err := decodeBudgets(data)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.Verbose {
+		fmt.Fprintf(os.Stderr, "Fetched %d budgets\n", len(budgets))
+	}
+	return budgets, nil
+}
 
-	resp, err := cfg.Client.Do(req)
+// httpGet performs a GET request with bearer token and returns response body
+func httpGet(client *http.Client, url, token string) ([]byte, error) {
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		err = errors.Join(err, resp.Body.Close())
 	}()
-
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bad status: %d", resp.StatusCode)
 	}
+	return io.ReadAll(resp.Body)
+}
 
+// decodeBudgets decodes a budgets list JSON
+func decodeBudgets(data []byte) ([]Budget, error) {
 	var wrapper struct {
 		Data struct {
 			Budgets []Budget `json:"budgets"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
+	if err := json.Unmarshal(data, &wrapper); err != nil {
 		return nil, err
 	}
-	return wrapper.Data.Budgets, err
+	return wrapper.Data.Budgets, nil
 }
 
-// downloadAndSave fetches a single budget's JSON and writes to file
-func downloadAndSave(cfg Config, b Budget) error {
+// downloadAndSave fetches a single budget's JSON, writes to file, and returns the file path
+func downloadAndSave(cfg Config, b Budget) (string, error) {
 	url := fmt.Sprintf("%s/%s", cfg.BaseURL, b.ID)
-	req, err := http.NewRequest("GET", url, nil)
+	data, err := httpGet(cfg.Client, url, cfg.Token)
 	if err != nil {
-		return err
+		return "", fmt.Errorf("download budget: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+cfg.Token)
-
-	resp, err := cfg.Client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = errors.Join(err, resp.Body.Close())
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download budget %s: status %d", b.ID, resp.StatusCode)
-	}
-
-	data, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return err
-	}
-
 	filename := buildFilename(b)
 	path := filepath.Join(cfg.OutputDir, filename)
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	if err := writeFile(path, data); err != nil {
+		return "", fmt.Errorf("write file: %w", err)
 	}
-	return nil
+	return path, nil
+}
+
+// writeFile writes data to a file with 0644 permissions
+func writeFile(path string, data []byte) error {
+	return os.WriteFile(path, data, 0644)
 }
 
 // buildFilename constructs a safe filename for a budget

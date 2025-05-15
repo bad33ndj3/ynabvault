@@ -94,7 +94,8 @@ func TestDownloadAndSave(t *testing.T) {
 	cfg := Config{Token: "tok", BaseURL: srv.URL, OutputDir: tmpDir, Client: srv.Client()}
 
 	// Run download
-	if err := downloadAndSave(cfg, b); err != nil {
+	path, err := downloadAndSave(cfg, b)
+	if err != nil {
 		t.Fatalf("downloadAndSave error: %v", err)
 	}
 
@@ -111,6 +112,10 @@ func TestDownloadAndSave(t *testing.T) {
 	if !strings.Contains(fname, "x_") || !strings.HasSuffix(fname, ".json") {
 		t.Errorf("unexpected filename: %s", fname)
 	}
+	// Verify returned path matches
+	if got := filepath.Base(path); got != fname {
+		t.Errorf("returned path %q does not match file %q", got, fname)
+	}
 	// Verify content
 	data, err := os.ReadFile(filepath.Join(tmpDir, fname))
 	if err != nil {
@@ -118,5 +123,191 @@ func TestDownloadAndSave(t *testing.T) {
 	}
 	if string(data) != budgetJSON {
 		t.Errorf("file content mismatch: %s", data)
+	}
+}
+
+// Optionally, add tests for new helpers if desired
+func TestDecodeBudgets(t *testing.T) {
+	jsonData := []byte(`{"data":{"budgets":[{"id":"1","name":"A","last_modified_on":"2025-05-14T10:00:00Z"}]}}`)
+	budgets, err := decodeBudgets(jsonData)
+	if err != nil {
+		t.Fatalf("decodeBudgets error: %v", err)
+	}
+	if len(budgets) != 1 || budgets[0].ID != "1" {
+		t.Errorf("unexpected decodeBudgets result: %+v", budgets)
+	}
+}
+
+// TestHttpGet verifies proper handling of various HTTP scenarios
+func TestHttpGet(t *testing.T) {
+	tests := []struct {
+		name       string
+		statusCode int
+		body       string
+		wantErr    bool
+	}{
+		{"success", http.StatusOK, "test data", false},
+		{"unauthorized", http.StatusUnauthorized, "", true},
+		{"server error", http.StatusInternalServerError, "", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				// Verify auth header is set
+				if r.Header.Get("Authorization") != "Bearer testtoken" {
+					t.Errorf("Expected Authorization header with bearer token")
+				}
+				w.WriteHeader(tc.statusCode)
+				_, err := w.Write([]byte(tc.body))
+				if err != nil {
+					t.Fatalf("writing response: %v", err)
+				}
+			}))
+			defer server.Close()
+
+			data, err := httpGet(server.Client(), server.URL, "testtoken")
+
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("Expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+				if string(data) != tc.body {
+					t.Errorf("Expected body %q, got %q", tc.body, string(data))
+				}
+			}
+		})
+	}
+}
+
+// TestDecodeBudgetsError verifies error handling with malformed JSON
+func TestDecodeBudgetsError(t *testing.T) {
+	invalidJSON := []byte(`{"data":{"budgets":[{"id":1,"name`)
+	_, err := decodeBudgets(invalidJSON)
+	if err == nil {
+		t.Error("Expected error with invalid JSON but got nil")
+	}
+}
+
+// TestWriteFile verifies file writing functionality
+func TestWriteFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	testPath := filepath.Join(tmpDir, "test.json")
+	testData := []byte(`{"test":"data"}`)
+
+	err := writeFile(testPath, testData)
+	if err != nil {
+		t.Fatalf("writeFile error: %v", err)
+	}
+
+	// Verify content was written correctly
+	content, err := os.ReadFile(testPath)
+	if err != nil {
+		t.Fatalf("Failed to read test file: %v", err)
+	}
+	if string(content) != string(testData) {
+		t.Errorf("Expected file content %q, got %q", testData, content)
+	}
+
+	// Test write error with bad path
+	badPath := filepath.Join(os.DevNull, "impossible.txt")
+	err = writeFile(badPath, testData)
+	if err == nil {
+		t.Error("Expected error writing to invalid path but got nil")
+	}
+}
+
+// TestDownloadAndSaveError checks error handling in downloadAndSave
+func TestDownloadAndSaveError(t *testing.T) {
+	// Server that always returns an error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	b := Budget{ID: "x", Name: "X", LastModifiedOn: time.Now()}
+	cfg := Config{Token: "tok", BaseURL: srv.URL, OutputDir: tmpDir, Client: srv.Client()}
+
+	_, err := downloadAndSave(cfg, b)
+	if err == nil {
+		t.Error("Expected error from downloadAndSave but got nil")
+	}
+}
+
+// TestFetchBudgetsError verifies error handling in fetchBudgets
+func TestFetchBudgetsError(t *testing.T) {
+	// Server that returns invalid JSON
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, err := w.Write([]byte(`{"data":{"budgets":[{"invalid`)) // Malformed JSON
+		if err != nil {
+			t.Fatalf("writing response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := Config{Token: "testtoken", BaseURL: srv.URL, Client: srv.Client()}
+	_, err := fetchBudgets(cfg)
+	if err == nil {
+		t.Error("Expected error with invalid JSON but got nil")
+	}
+}
+
+// TestRun verifies the main orchestration function
+func TestRun(t *testing.T) {
+	// Mock server that returns a list of budgets and then budget details
+	var requestCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		w.Header().Set("Content-Type", "application/json")
+
+		// First request: budgets list
+		if requestCount == 1 {
+			_, err := io.WriteString(w, `{"data":{"budgets":[{"id":"test1","name":"Budget1","last_modified_on":"2025-01-01T00:00:00Z"}]}}`)
+			if err != nil {
+				t.Fatalf("writing response: %v", err)
+			}
+			return
+		}
+
+		// Budget detail requests
+		_, err := io.WriteString(w, `{"budget":{"name":"Budget1","id":"test1"}}`)
+		if err != nil {
+			t.Fatalf("writing response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	tmpDir := t.TempDir()
+	cfg := Config{
+		Token:     "testtoken",
+		BaseURL:   srv.URL,
+		OutputDir: tmpDir,
+		Verbose:   true,
+		Client:    srv.Client(),
+	}
+
+	count, err := run(cfg)
+	if err != nil {
+		t.Fatalf("run() error: %v", err)
+	}
+
+	// Verify count is correct
+	if count != 1 {
+		t.Errorf("Expected to process 1 budget, got %d", count)
+	}
+
+	// Verify file was created
+	files, err := os.ReadDir(tmpDir)
+	if err != nil {
+		t.Fatalf("Error reading output dir: %v", err)
+	}
+	if len(files) != 1 {
+		t.Errorf("Expected 1 file in output dir, got %d", len(files))
 	}
 }

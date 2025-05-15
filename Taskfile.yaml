@@ -19,10 +19,14 @@ tasks:
     deps:
       - build
     vars:
-      Verbose:
-        sh: {{.VERBOSE | default "false" }}
     cmds:
-      - ./bin/ynab-vault --output budgets --url https://api.youneedabudget.com/v1/budgets{{if .Verbose}} --verbose{{end}}
+      - ./bin/ynab-vault --output budgets
+
+  lint:
+    desc: "Run golangci-lint"
+    cmds:
+      - golangci-lint run ./...
+    silent: true
 
   test:
     desc: "Run all Go tests"

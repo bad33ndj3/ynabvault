@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -100,7 +101,9 @@ func fetchBudgets(cfg Config) ([]Budget, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err = errors.Join(err, resp.Body.Close())
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("bad status: %d", resp.StatusCode)
@@ -114,7 +117,7 @@ func fetchBudgets(cfg Config) ([]Budget, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&wrapper); err != nil {
 		return nil, err
 	}
-	return wrapper.Data.Budgets, nil
+	return wrapper.Data.Budgets, err
 }
 
 // downloadAndSave fetches a single budget's JSON and writes to file
@@ -130,8 +133,9 @@ func downloadAndSave(cfg Config, b Budget) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-
+	defer func() {
+		err = errors.Join(err, resp.Body.Close())
+	}()
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("failed to download budget %s: status %d", b.ID, resp.StatusCode)
 	}

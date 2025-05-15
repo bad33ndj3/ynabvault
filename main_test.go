@@ -49,7 +49,10 @@ func TestFetchBudgets(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		io.WriteString(w, `{"data":{"budgets":[{"id":"1","name":"A","last_modified_on":"2025-05-14T10:00:00Z"},{"id":"2","name":"B","last_modified_on":"2025-05-14T11:00:00Z"}]}}`)
+		_, err := io.WriteString(w, `{"data":{"budgets":[{"id":"1","name":"A","last_modified_on":"2025-05-14T10:00:00Z"},{"id":"2","name":"B","last_modified_on":"2025-05-14T11:00:00Z"}]}}`)
+		if err != nil {
+			t.Fatalf("writing response: %v", err)
+		}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(handler))
 	defer srv.Close()
@@ -77,7 +80,10 @@ func TestDownloadAndSave(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		io.WriteString(w, budgetJSON)
+		_, err := io.WriteString(w, budgetJSON)
+		if err != nil {
+			t.Fatalf("writing response: %v", err)
+		}
 	}
 	srv := httptest.NewServer(http.HandlerFunc(handler))
 	defer srv.Close()

@@ -37,6 +37,6 @@ tasks:
   clean:
     desc: "Remove built binary and budgets directory"
     cmds:
-      - rm -f bin
+      - rm -rf bin
       - rm -rf budgets
     silent: true

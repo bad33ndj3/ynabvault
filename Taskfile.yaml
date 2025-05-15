@@ -1,0 +1,38 @@
+version: '3'
+
+tasks:
+  build:
+    desc: "Compile the ynab-vault binary"
+    sources:
+      - '*.go'
+      - '*.mod'
+      - '*.sum'
+    generates:
+      - bin/ynab-vault
+    cmds:
+      - go build -o bin/ynab-vault fetch_budgets.go
+    silent: true
+
+  run:
+    desc: "Fetch all budgets using YNAB Vault"
+    silent: true
+    deps:
+      - build
+    vars:
+      Verbose:
+        sh: {{.VERBOSE | default "false" }}
+    cmds:
+      - ./bin/ynab-vault --output budgets --url https://api.youneedabudget.com/v1/budgets{{if .Verbose}} --verbose{{end}}
+
+  test:
+    desc: "Run all Go tests"
+    cmds:
+      - go test ./...
+    silent: true
+
+  clean:
+    desc: "Remove built binary and budgets directory"
+    cmds:
+      - rm -f ynab-vault
+      - rm -rf budgets
+    silent: true

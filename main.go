@@ -112,7 +112,7 @@ func fetchBudgets(cfg Config) ([]Budget, error) {
 }
 
 // httpGet performs a GET request with bearer token and returns response body
-func httpGet(client *http.Client, url, token string) ([]byte, error) {
+func httpGet(client *http.Client, url, token string) (data []byte, err error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -126,9 +126,11 @@ func httpGet(client *http.Client, url, token string) ([]byte, error) {
 		err = errors.Join(err, resp.Body.Close())
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("bad status: %d", resp.StatusCode)
+		err = fmt.Errorf("bad status: %d", resp.StatusCode)
+		return
 	}
-	return io.ReadAll(resp.Body)
+	data, err = io.ReadAll(resp.Body)
+	return
 }
 
 // decodeBudgets decodes a budgets list JSON

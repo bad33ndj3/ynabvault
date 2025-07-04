@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Config holds CLI parameters and dependencies
@@ -20,6 +22,13 @@ type Config struct {
 	OutputDir string
 	Verbose   bool
 	Client    *http.Client
+	Logger    *log.Logger
+}
+
+func (c Config) logf(format string, args ...interface{}) {
+	if c.Logger != nil {
+		c.Logger.Printf(format, args...)
+	}
 }
 
 // Budget holds basic info from YNAB list endpoint
@@ -28,6 +37,8 @@ type Budget struct {
 	Name           string    `json:"name"`
 	LastModifiedOn time.Time `json:"last_modified_on"`
 }
+
+const timeFormat = "20060102T150405Z"
 
 func main() {
 	// CLI flags
@@ -47,12 +58,18 @@ func main() {
 		os.Exit(1)
 	}
 
+	logger := log.New(os.Stderr, "", 0)
+	if !*verbose {
+		logger.SetOutput(io.Discard)
+	}
+
 	cfg := Config{
 		Token:     tok,
 		BaseURL:   *url,
 		OutputDir: *output,
 		Verbose:   *verbose,
 		Client:    http.DefaultClient,
+		Logger:    logger,
 	}
 
 	if count, err := run(cfg); err != nil {
@@ -65,16 +82,12 @@ func main() {
 
 // run orchestrates the fetch-and-save workflow and returns number of budgets processed
 func run(cfg Config) (int, error) {
-	if cfg.Verbose {
-		fmt.Fprintln(os.Stderr, "Creating output directory", cfg.OutputDir)
-	}
+	cfg.logf("Creating output directory %s", cfg.OutputDir)
 	if err := os.MkdirAll(cfg.OutputDir, 0755); err != nil {
 		return 0, fmt.Errorf("failed to create output dir: %w", err)
 	}
 
-	if cfg.Verbose {
-		fmt.Fprintln(os.Stderr, "Fetching budgets list from", cfg.BaseURL)
-	}
+	cfg.logf("Fetching budgets list from %s", cfg.BaseURL)
 	budgets, err := fetchBudgets(cfg)
 	if err != nil {
 		return 0, fmt.Errorf("fetch budgets: %w", err)
@@ -82,13 +95,11 @@ func run(cfg Config) (int, error) {
 
 	count := 0
 	for _, b := range budgets {
-		if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "Processing budget %s (%s)\n", b.Name, b.ID)
-		}
+		cfg.logf("Processing budget %s (%s)", b.Name, b.ID)
 		if path, err := downloadAndSave(cfg, b); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
-		} else if cfg.Verbose {
-			fmt.Fprintf(os.Stderr, "Saved to %s\n", path)
+			cfg.logf("Warning: %v", err)
+		} else {
+			cfg.logf("Saved to %s", path)
 		}
 		count++
 	}
@@ -105,9 +116,7 @@ func fetchBudgets(cfg Config) ([]Budget, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.Verbose {
-		fmt.Fprintf(os.Stderr, "Fetched %d budgets\n", len(budgets))
-	}
+	cfg.logf("Fetched %d budgets", len(budgets))
 	return budgets, nil
 }
 
@@ -169,21 +178,21 @@ func writeFile(path string, data []byte) error {
 // buildFilename constructs a safe filename for a budget
 func buildFilename(b Budget) string {
 	safe := sanitizeFileName(b.Name)
-	ts := b.LastModifiedOn.UTC().Format("20060102T150405Z")
+	ts := b.LastModifiedOn.UTC().Format(timeFormat)
 	return fmt.Sprintf("%s_%s_%s.json", safe, b.ID, ts)
 }
 
 // sanitizeFileName replaces or removes unsupported characters
 func sanitizeFileName(name string) string {
-	s := strings.ReplaceAll(name, " ", "_")
-	s = strings.ReplaceAll(s, "/", "_")
-	s = strings.Map(func(r rune) rune {
-		if strings.ContainsRune("_-+().A-Za-z0-9", r) || r >= '0' && r <= '9' ||
-			r >= 'A' && r <= 'Z' ||
-			r >= 'a' && r <= 'z' {
-			return r
+	clean := strings.NewReplacer(" ", "_", "/", "_").Replace(name)
+	var b strings.Builder
+	for _, r := range clean {
+		switch {
+		case r == '_' || r == '-' || r == '+' || r == '(' || r == ')' || r == '.':
+			b.WriteRune(r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			b.WriteRune(r)
 		}
-		return -1
-	}, s)
-	return s
+	}
+	return b.String()
 }

@@ -311,3 +311,24 @@ func TestRun(t *testing.T) {
 		t.Errorf("Expected 1 file in output dir, got %d", len(files))
 	}
 }
+
+// TestRunFetchError verifies run() returns an error when the
+// initial budget list cannot be fetched.
+func TestRunFetchError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	cfg := Config{
+		Token:     "tok",
+		BaseURL:   srv.URL,
+		OutputDir: t.TempDir(),
+		Client:    srv.Client(),
+	}
+
+	_, err := run(cfg)
+	if err == nil {
+		t.Fatal("expected error from run but got nil")
+	}
+}

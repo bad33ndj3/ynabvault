@@ -17,11 +17,26 @@ A simple Go command-line tool to backup all your YNAB (You Need A Budget) budget
 
 ## Installation
 
-1. Clone this repository:
+1. **Clone the repository:**
+
+   ```bash
+   git clone https://github.com/bad33ndj3/ynabvault.git
+   ```
+
+2. **Build and install:**
+
+   ```bash
+   cd ynabvault
+   go install ./...
+   ```
+
+3. **Or install directly without cloning:**
 
    ```bash
    go install github.com/bad33ndj3/ynabvault@latest
    ```
+
+You will need a YNAB API access token. Generate one in your YNAB account as described in the [official documentation](https://api.youneedabudget.com/#authentication).
 
 ## Usage
 
